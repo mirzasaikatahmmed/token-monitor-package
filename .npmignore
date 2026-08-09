@@ -1,0 +1,15 @@
+# Keep publish tarball lean — only dist + vendor + docs (also via package.json "files")
+src/
+scripts/
+tsconfig.json
+tsup.config.ts
+*.tsbuildinfo
+node_modules/
+.git/
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+*.log
+*.tgz
