@@ -1,0 +1,55 @@
+name: Publish npm
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: publish-npm-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Sync vendor (optional, if sibling agent exists)
+        run: npm run sync-vendor || true
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+      - name: Publish (skip if version already exists)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          NAME="$(node -p "require('./package.json').name")"
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "Package: ${NAME}@${VERSION}"
+
+          if npm view "${NAME}@${VERSION}" version >/dev/null 2>&1; then
+            echo "Version ${VERSION} already on npm — skipping publish."
+            exit 0
+          fi
+
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::Missing GitHub secret NPM_TOKEN"
+            exit 1
+          fi
+
+          npm publish --access public
+          echo "Published ${NAME}@${VERSION}"

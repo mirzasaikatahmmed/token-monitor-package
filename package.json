@@ -13,10 +13,13 @@
   ],
   "license": "MIT",
   "author": "Token Monitor",
+  "homepage": "https://github.com/mirzasaikatahmmed/token-monitor-package#readme",
+  "bugs": {
+    "url": "https://github.com/mirzasaikatahmmed/token-monitor-package/issues"
+  },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mirzasaikatahmed/Token-Monitor.git",
-    "directory": "token-monitor-package"
+    "url": "git+https://github.com/mirzasaikatahmmed/token-monitor-package.git"
   },
   "publishConfig": {
     "access": "public"

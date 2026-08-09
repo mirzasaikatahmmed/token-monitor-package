@@ -1,6 +1,12 @@
-# token-monitor
+# @mirzasaikatahmmed/token-monitor
+
+[![CI](https://github.com/mirzasaikatahmmed/token-monitor-package/actions/workflows/ci.yml/badge.svg)](https://github.com/mirzasaikatahmmed/token-monitor-package/actions/workflows/ci.yml)
+[![Publish npm](https://github.com/mirzasaikatahmmed/token-monitor-package/actions/workflows/publish.yml/badge.svg)](https://github.com/mirzasaikatahmmed/token-monitor-package/actions/workflows/publish.yml)
+[![npm](https://img.shields.io/npm/v/@mirzasaikatahmmed/token-monitor.svg)](https://www.npmjs.com/package/@mirzasaikatahmmed/token-monitor)
 
 Professional global CLI for the **Token Monitor** agent. Collects Claude Code, Puku CLI, and Cursor usage on this machine and ships it to your dashboard.
+
+**Repository:** https://github.com/mirzasaikatahmmed/token-monitor-package
 
 ```bash
 npm install -g @mirzasaikatahmmed/token-monitor
@@ -79,9 +85,10 @@ Override with `TOKEN_MONITOR_DATA_DIR=/custom/path`.
 | macOS | launchd `local.token-monitor-agent` |
 | Windows | Task Scheduler `TokenMonitorAgent` |
 
-## Development (this repo)
+## Development
 
 ```bash
+git clone https://github.com/mirzasaikatahmmed/token-monitor-package.git
 cd token-monitor-package
 npm install
 npm run build
@@ -89,51 +96,57 @@ npm link                 # exposes token-monitor on PATH
 token-monitor doctor
 ```
 
-Sync the vendored Python agent from `../token-monitor-agent`:
+Sync the vendored Python agent from a sibling `../token-monitor-agent` checkout (optional):
 
 ```bash
 npm run sync-vendor
 ```
 
+In a standalone clone, `vendor/agent/` is already included — sync keeps existing vendor if the sibling is missing.
+
 ### Layout
 
 ```
-token-monitor-package/
-  src/           # TypeScript CLI
-  vendor/agent/  # Vendored agent.py + requirements.txt
-  dist/          # Built CLI (npm pack)
+.
+├── src/              # TypeScript CLI
+├── vendor/agent/     # Vendored agent.py + requirements.txt
+├── dist/             # Built CLI (npm pack)
+└── .github/workflows # CI + npm publish
 ```
 
-The collector itself remains Python (`vendor/agent/agent.py`) so Claude / Puku / Cursor parsers stay in one place. The CLI owns install UX, encrypted config writes (via agent helpers), and OS services.
+The collector itself remains Python (`vendor/agent/agent.py`). The CLI owns install UX, encrypted config writes (via agent helpers), and OS services.
 
-## CI / CD (GitHub → npm)
+## CI / CD
 
-Workflows live at the monorepo root:
+Workflows in [`.github/workflows/`](https://github.com/mirzasaikatahmmed/token-monitor-package/tree/main/.github/workflows):
 
-- [`.github/workflows/ci-token-monitor.yml`](../.github/workflows/ci-token-monitor.yml) — typecheck + build on PR/push
-- [`.github/workflows/publish-npm.yml`](../.github/workflows/publish-npm.yml) — on push to `main`/`master` (paths under `token-monitor-package/` or agent vendor sources), rebuild and `npm publish`
+| Workflow | Trigger | Action |
+|----------|---------|--------|
+| [`ci.yml`](https://github.com/mirzasaikatahmmed/token-monitor-package/blob/main/.github/workflows/ci.yml) | push / PR | typecheck + build |
+| [`publish.yml`](https://github.com/mirzasaikatahmmed/token-monitor-package/blob/main/.github/workflows/publish.yml) | push to `main`/`master` | build + `npm publish` |
 
-### One-time setup
+### Secrets
 
-1. Create a **granular npm access token** (Read and write / publish) at  
-   https://www.npmjs.com/settings/~/tokens  
-   Prefer “Bypass 2FA” for CI. **Never commit the token.**
-2. In the GitHub repo → **Settings → Secrets and variables → Actions** → New repository secret:
-   - Name: `NPM_TOKEN`
-   - Value: the npm token
-3. Push this monorepo to GitHub (workflows must live in the default branch).
-4. Bump the version before each new release (npm won’t republish the same version):
+1. Create a granular npm token at https://www.npmjs.com/settings/~/tokens  
+2. Add GitHub Actions secret **`NPM_TOKEN`**:  
+   https://github.com/mirzasaikatahmmed/token-monitor-package/settings/secrets/actions
+
+### Release
+
+Bump the version, then push (same version on npm is skipped):
 
 ```bash
-cd token-monitor-package
-npm version patch   # 1.0.0 → 1.0.1
-git add -A && git commit -m "release: token-monitor 1.0.1"
-git push
+npm version patch
+git push && git push --tags
 ```
 
-If `package.json` version already exists on npm, the publish job **skips** safely.
+Manual publish: [Actions → Publish npm → Run workflow](https://github.com/mirzasaikatahmmed/token-monitor-package/actions/workflows/publish.yml)
 
-Manual run: GitHub → Actions → **Publish token-monitor npm** → Run workflow.
+## Links
+
+- GitHub: https://github.com/mirzasaikatahmmed/token-monitor-package
+- npm: https://www.npmjs.com/package/@mirzasaikatahmmed/token-monitor
+- Issues: https://github.com/mirzasaikatahmmed/token-monitor-package/issues
 
 ## License
 

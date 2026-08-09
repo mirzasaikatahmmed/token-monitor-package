@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Sync vendor (optional, if sibling agent exists)
+        run: npm run sync-vendor || true
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm pack --dry-run
