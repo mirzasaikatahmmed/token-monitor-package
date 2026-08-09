@@ -30,6 +30,18 @@ import requests
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
+
+def _force_utf8_stdio() -> None:
+    """Avoid UnicodeEncodeError on Windows consoles (cp1252, etc.)."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+
+_force_utf8_stdio()
+
 # ---------------------------------------------------------------------------
 # Paths — user/system data dir (NOT the project folder)
 #   Linux:  ~/.config/token-monitor-agent/
@@ -187,7 +199,7 @@ def _migrate_legacy_plaintext() -> dict | None:
                 path.unlink()
             except OSError:
                 pass
-        print(f"[config] migrated plaintext → encrypted {CONFIG_ENC}", flush=True)
+        print(f"[config] migrated plaintext -> encrypted {CONFIG_ENC}", flush=True)
         print(f"[config] removed plaintext (backup: {bak.name})", flush=True)
         return cfg
     return None
@@ -199,7 +211,7 @@ def _migrate_legacy_state() -> None:
         try:
             import shutil
             shutil.copy2(legacy_db, STATE_DB)
-            print(f"[config] migrated state db → {STATE_DB}", flush=True)
+            print(f"[config] migrated state db -> {STATE_DB}", flush=True)
         except OSError as exc:
             print(f"[config] state migrate skipped: {exc}", flush=True)
 
@@ -237,8 +249,8 @@ def _cli_write_config_from_stdin() -> int:
     raw = sys.stdin.read()
     data = json.loads(raw)
     path = save_config(data)
-    print(f"[config] encrypted config written → {path}")
-    print(f"[config] data dir → {DATA_DIR}")
+    print(f"[config] encrypted config written -> {path}")
+    print(f"[config] data dir -> {DATA_DIR}")
     return 0
 
 
@@ -258,7 +270,7 @@ def _cli_set_token(token: str) -> int:
         "pushIntervalSeconds": int(cfg.get("pushIntervalSeconds") or 30),
         "sources": merge_sources(cfg.get("sources")),
     })
-    print(f"[config] agentToken updated → {path}")
+    print(f"[config] agentToken updated -> {path}")
     print(f"[config] restart agent to apply: systemctl --user restart token-monitor-agent")
     return 0
 
@@ -1105,7 +1117,7 @@ def start_watchdogs():
         observer.daemon = True
         observer.start()
     else:
-        print("[watchdog] no source dirs found — periodic poll only", flush=True)
+        print("[watchdog] no source dirs found - periodic poll only", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1125,8 +1137,8 @@ def send_heartbeat():
         )
         if r.status_code == 401:
             print(
-                "[heartbeat] 401 Unauthorized — agentToken is invalid. "
-                "Open dashboard → Setup → Regenerate token, then re-run the installer "
+                "[heartbeat] 401 Unauthorized - agentToken is invalid. "
+                "Open dashboard -> Setup -> Regenerate token, then re-run the installer "
                 f"(or: python3 agent.py --write-config < config.json). Data dir: {DATA_DIR}",
                 flush=True,
             )
@@ -1225,7 +1237,7 @@ def push_loop():
 
         if triggered:
             _debounce_gather()
-            print("[realtime] change detected — scanning & pushing", flush=True)
+            print("[realtime] change detected - scanning & pushing", flush=True)
 
         # On event OR periodic tick: collect then push immediately
         scan_all_sources()
@@ -1274,7 +1286,7 @@ def _handle_stop(signum, _frame):
 
 
 def main():
-    print(f"[agent] starting — device={DEVICE_ID} backend={BACKEND}", flush=True)
+    print(f"[agent] starting - device={DEVICE_ID} backend={BACKEND}", flush=True)
     print(f"[agent] data_dir={DATA_DIR} (encrypted config)", flush=True)
     print(f"[agent] sources={sorted(SOURCES)}", flush=True)
     print(
@@ -1285,7 +1297,7 @@ def main():
         f"copilot_cli={COPILOT_LOGS.exists()}",
         flush=True,
     )
-    print("[agent] mode=realtime (watch → ingest → websocket dashboard)", flush=True)
+    print("[agent] mode=realtime (watch -> ingest -> websocket dashboard)", flush=True)
 
     atexit.register(send_offline)
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -1306,7 +1318,7 @@ def main():
 
     send_heartbeat()
     print(
-        "[agent] running — live push on Claude / Puku / Cursor / Codex / "
+        "[agent] running - live push on Claude / Puku / Cursor / Codex / "
         "Antigravity / Copilot writes. Ctrl-C to stop.",
         flush=True,
     )

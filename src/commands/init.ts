@@ -117,7 +117,7 @@ export async function cmdInit(opts: InitOptions): Promise<void> {
 
   try {
     writeEncryptedConfig(cfg);
-    ok(`Encrypted config saved → ${dataDir()}/config.enc`);
+    ok(`Encrypted config saved -> ${dataDir()}/config.enc`);
   } catch (err) {
     fail(err instanceof Error ? err.message : String(err));
     process.exitCode = 1;

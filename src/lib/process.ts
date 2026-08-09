@@ -5,7 +5,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { findPython, ensureVendorAgent } from './python.js';
+import { findPython, ensureVendorAgent, pythonChildEnv } from './python.js';
 import { logFilePath, pidFilePath, vendorAgentPy } from './paths.js';
 
 function sleepMs(ms: number): void {
@@ -72,7 +72,7 @@ export function startDetachedAgent(): number {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
-      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+      env: pythonChildEnv(),
     });
     child.unref();
     if (child.pid == null) throw new Error('Failed to start agent');
@@ -86,7 +86,7 @@ export function startDetachedAgent(): number {
     {
       detached: true,
       stdio: 'ignore',
-      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+      env: pythonChildEnv(),
     },
   );
   child.unref();
@@ -128,7 +128,7 @@ export function runAgentForeground(): never {
   const py = findPython();
   const r = spawnSync(py.command, [vendorAgentPy()], {
     stdio: 'inherit',
-    env: { ...process.env, PYTHONUNBUFFERED: '1' },
+    env: pythonChildEnv(),
   });
   process.exit(r.status ?? 1);
 }

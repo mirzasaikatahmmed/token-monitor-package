@@ -33,6 +33,8 @@ ExecStart=${py.command} ${agent}
 Restart=always
 RestartSec=10
 Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONIOENCODING=utf-8
+Environment=PYTHONUTF8=1
 
 [Install]
 WantedBy=default.target

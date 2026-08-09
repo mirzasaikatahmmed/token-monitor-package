@@ -34,6 +34,8 @@ export function writePlist(): string {
   <key>EnvironmentVariables</key>
   <dict>
     <key>PYTHONUNBUFFERED</key><string>1</string>
+    <key>PYTHONIOENCODING</key><string>utf-8</string>
+    <key>PYTHONUTF8</key><string>1</string>
   </dict>
 </dict>
 </plist>

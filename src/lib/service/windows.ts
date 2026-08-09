@@ -17,7 +17,7 @@ export function writeVbs(): string {
   const workDir = join(agent, '..');
   const content = `Set objShell = CreateObject("WScript.Shell")
 objShell.CurrentDirectory = "${workDir.replace(/\\/g, '\\\\')}"
-objShell.Run "cmd /c ""${py.command}"" ""${agent}"" >> ""${log}"" 2>&1", 0, False
+objShell.Run "cmd /c set PYTHONUNBUFFERED=1&& set PYTHONIOENCODING=utf-8&& set PYTHONUTF8=1&& ""${py.command}"" ""${agent}"" >> ""${log}"" 2>&1", 0, False
 `;
   const path = vbsPath();
   writeFileSync(path, content);

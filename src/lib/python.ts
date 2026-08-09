@@ -25,6 +25,17 @@ export function findPython(): PythonInfo {
   return found;
 }
 
+/** Env vars that keep Python I/O safe on Windows (cp1252 consoles). */
+export function pythonChildEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    PYTHONUNBUFFERED: '1',
+    PYTHONIOENCODING: 'utf-8',
+    PYTHONUTF8: '1',
+    ...extra,
+  };
+}
+
 export function runPython(
   args: string[],
   opts?: { input?: string; env?: NodeJS.ProcessEnv },
@@ -33,7 +44,7 @@ export function runPython(
   return spawnSync(py.command, args, {
     encoding: 'utf8',
     input: opts?.input,
-    env: { ...process.env, ...opts?.env, PYTHONUNBUFFERED: '1' },
+    env: pythonChildEnv(opts?.env),
   });
 }
 
@@ -55,7 +66,7 @@ export function installPythonDeps(): void {
   ];
   let lastErr = '';
   for (const args of attempts) {
-    const r = spawnSync(py.command, args, { encoding: 'utf8' });
+    const r = spawnSync(py.command, args, { encoding: 'utf8', env: pythonChildEnv() });
     if (r.status === 0) return;
     lastErr = r.stderr || r.stdout || 'unknown error';
   }
@@ -64,7 +75,10 @@ export function installPythonDeps(): void {
 
 export function checkPythonImport(mod: string): boolean {
   const py = findPython();
-  const r = spawnSync(py.command, ['-c', `import ${mod}`], { encoding: 'utf8' });
+  const r = spawnSync(py.command, ['-c', `import ${mod}`], {
+    encoding: 'utf8',
+    env: pythonChildEnv(),
+  });
   return r.status === 0;
 }
 
@@ -129,7 +143,10 @@ print(json.dumps({
   "sources": c.get("sources") or [],
 }))
 `;
-  const r = spawnSync(py.command, ['-c', script], { encoding: 'utf8' });
+  const r = spawnSync(py.command, ['-c', script], {
+    encoding: 'utf8',
+    env: pythonChildEnv(),
+  });
   if (r.status !== 0) {
     throw new Error(r.stderr || r.stdout || 'Failed to load config');
   }
