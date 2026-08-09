@@ -1,6 +1,6 @@
 {
   "name": "@mirzasaikatahmmed/token-monitor",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Token Monitor agent CLI — collect Claude / Puku / Cursor usage and ship it to your dashboard",
   "keywords": [
     "token-monitor",
