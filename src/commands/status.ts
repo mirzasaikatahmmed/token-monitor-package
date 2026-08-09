@@ -51,11 +51,15 @@ export async function cmdStatus(): Promise<void> {
     ['claude', join(home, '.claude', 'projects')],
     ['puku', join(home, '.puku-cli', 'projects')],
     ['cursor', join(home, '.cursor', 'ai-tracking', 'ai-code-tracking.db')],
+    ['codex', join(home, '.codex', 'sessions')],
+    ['antigravity', join(home, '.gemini', 'antigravity', 'brain')],
+    ['copilot IDE', join(home, '.config', 'Code', 'User', 'globalStorage', 'github.copilot-chat', 'session-store.db')],
+    ['copilot CLI', join(home, '.copilot', 'logs')],
   ] as const;
   for (const [name, path] of sources) {
     const present = existsSync(path);
     console.log(
-      `  ${name.padEnd(8)}`,
+      `  ${name.padEnd(12)}`,
       present ? chalk.green('found') : chalk.dim('missing'),
       chalk.dim(path),
     );

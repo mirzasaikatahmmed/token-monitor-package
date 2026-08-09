@@ -3,11 +3,13 @@
 Token Monitor Agent — collects AI usage from this device and ships it to the backend.
 
 Sources (auto-discovered on this machine):
-  • Claude Code  — ~/.claude/projects/**/*.jsonl  (real token usage)
-  • Puku CLI     — ~/.puku-cli/projects/**/*.jsonl (real token usage)
-  • Cursor       — ~/.cursor/ai-tracking/ai-code-tracking.db
-                   (per-request activity; tokens estimated from AI-written code
-                    size when Cursor does not store official token counts locally)
+  • Claude Code     — ~/.claude/projects/**/*.jsonl
+  • Puku CLI        — ~/.puku-cli/projects/**/*.jsonl
+  • Cursor          — ~/.cursor/ai-tracking/ai-code-tracking.db (+ transcripts)
+  • Codex CLI       — ~/.codex/sessions/**/*.jsonl  (real token_count events)
+  • Antigravity     — ~/.gemini/antigravity/brain/**/overview.txt (estimated)
+  • Copilot IDE     — VS Code / Antigravity github.copilot-chat session-store.db
+  • Copilot CLI     — ~/.copilot/logs (session estimates)
 """
 
 from __future__ import annotations
@@ -66,6 +68,62 @@ PUKU_PROJECTS   = HOME / ".puku-cli" / "projects"
 CURSOR_AI_DIR   = HOME / ".cursor" / "ai-tracking"
 CURSOR_AI_DB    = CURSOR_AI_DIR / "ai-code-tracking.db"
 CURSOR_PROJECTS = HOME / ".cursor" / "projects"
+CODEX_SESSIONS  = HOME / ".codex" / "sessions"
+ANTIGRAVITY_BRAIN = HOME / ".gemini" / "antigravity" / "brain"
+COPILOT_DIR     = HOME / ".copilot"
+COPILOT_LOGS    = COPILOT_DIR / "logs"
+
+DEFAULT_SOURCES = [
+    "claude_code",
+    "puku_cli",
+    "cursor",
+    "codex",
+    "antigravity",
+    "copilot_ide",
+    "copilot_cli",
+]
+
+
+def merge_sources(configured: list | None) -> list[str]:
+    """Keep configured order; append any newly added default sources."""
+    if not configured:
+        return list(DEFAULT_SOURCES)
+    out = [str(s) for s in configured]
+    for s in DEFAULT_SOURCES:
+        if s not in out:
+            out.append(s)
+    return out
+
+
+def _vscode_style_copilot_dbs() -> list[Path]:
+    """Copilot Chat session DBs across VS Code–family editors."""
+    bases: list[Path] = []
+    if sys.platform == "darwin":
+        app_support = HOME / "Library" / "Application Support"
+        bases = [
+            app_support / "Code" / "User" / "globalStorage" / "github.copilot-chat",
+            app_support / "Antigravity" / "User" / "globalStorage" / "github.copilot-chat",
+            app_support / "Code - Insiders" / "User" / "globalStorage" / "github.copilot-chat",
+        ]
+    elif sys.platform == "win32":
+        appdata = Path(os.environ.get("APPDATA", HOME / "AppData" / "Roaming"))
+        bases = [
+            appdata / "Code" / "User" / "globalStorage" / "github.copilot-chat",
+            appdata / "Antigravity" / "User" / "globalStorage" / "github.copilot-chat",
+        ]
+    else:
+        cfg = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config"))
+        bases = [
+            cfg / "Code" / "User" / "globalStorage" / "github.copilot-chat",
+            cfg / "Antigravity" / "User" / "globalStorage" / "github.copilot-chat",
+            cfg / "Code - Insiders" / "User" / "globalStorage" / "github.copilot-chat",
+        ]
+    out: list[Path] = []
+    for b in bases:
+        db = b / "session-store.db"
+        if db.exists():
+            out.append(db)
+    return out
 
 
 def _chmod_private(path: Path) -> None:
@@ -153,7 +211,7 @@ def load_config() -> dict:
         "deviceId":             platform.node().lower().replace(" ", "-"),
         "hostname":             platform.node(),
         "pushIntervalSeconds":  30,
-        "sources":              ["claude_code", "puku_cli", "cursor"],
+        "sources":              list(DEFAULT_SOURCES),
     }
     env_override = {
         "backendUrl":  os.environ.get("BACKEND_URL"),
@@ -168,6 +226,7 @@ def load_config() -> dict:
         loaded = _migrate_legacy_plaintext()
     if loaded:
         cfg.update(loaded)
+    cfg["sources"] = merge_sources(cfg.get("sources"))
     for k, v in env_override.items():
         if v:
             cfg[k] = v
@@ -197,7 +256,7 @@ def _cli_set_token(token: str) -> int:
         "deviceId": cfg.get("deviceId", ""),
         "hostname": cfg.get("hostname", ""),
         "pushIntervalSeconds": int(cfg.get("pushIntervalSeconds") or 30),
-        "sources": cfg.get("sources") or ["claude_code", "puku_cli", "cursor"],
+        "sources": merge_sources(cfg.get("sources")),
     })
     print(f"[config] agentToken updated → {path}")
     print(f"[config] restart agent to apply: systemctl --user restart token-monitor-agent")
@@ -235,7 +294,7 @@ TOKEN     = CFG["agentToken"]
 DEVICE_ID = CFG["deviceId"]
 HOSTNAME  = CFG["hostname"]
 INTERVAL  = int(CFG["pushIntervalSeconds"])
-SOURCES   = set(CFG.get("sources") or ["claude_code", "puku_cli", "cursor"])
+SOURCES   = set(merge_sources(CFG.get("sources")))
 OS_STR    = f"{platform.system()} {platform.release()}"
 
 HEADERS = {
@@ -596,12 +655,312 @@ def scan_cursor_transcripts() -> int:
     return total
 
 
+# ---------------------------------------------------------------------------
+# Codex CLI — ~/.codex/sessions/**/*.jsonl (real token_count events)
+# ---------------------------------------------------------------------------
+
+def find_codex_logs() -> list[Path]:
+    if not CODEX_SESSIONS.exists():
+        return []
+    return list(CODEX_SESSIONS.rglob("*.jsonl"))
+
+
+def scan_codex_file(path: Path) -> int:
+    """Ingest Codex token_count events (last_token_usage per event)."""
+    str_path = str(path)
+    offset = get_offset(str_path)
+    count = 0
+    session_id = path.stem
+    model = "gpt-5"
+    try:
+        if path.stat().st_size <= offset:
+            return 0
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            fh.seek(offset)
+            for raw in fh:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    obj = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                typ = obj.get("type")
+                payload = obj.get("payload") or {}
+                # Track model from turn_context / world_state when present
+                if typ == "turn_context" and isinstance(payload, dict) and payload.get("model"):
+                    model = str(payload["model"])
+                elif typ == "world_state" and isinstance(payload, dict):
+                    state = payload.get("state") or {}
+                    m = state.get("model") or (state.get("personality") or {}).get("model")
+                    if m:
+                        model = str(m)
+                if typ == "event_msg" and isinstance(payload, dict) and payload.get("type") == "token_count":
+                    info = payload.get("info") or {}
+                    last = info.get("last_token_usage") or {}
+                    raw_in = int(last.get("input_tokens") or 0)
+                    out = int(last.get("output_tokens") or 0) + int(last.get("reasoning_output_tokens") or 0)
+                    cache_r = int(last.get("cached_input_tokens") or 0)
+                    cache_w = int(last.get("cache_write_input_tokens") or 0)
+                    # Codex input_tokens usually includes cached; split for pricing
+                    inp = max(0, raw_in - cache_r) if cache_r and raw_in >= cache_r else raw_in
+                    if inp + out + cache_r + cache_w <= 0:
+                        continue
+                    ts = obj.get("timestamp") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                    rid = f"codex:{session_id}:{ts}:{raw_in}:{out}"
+                    enqueue({
+                        "source": "codex",
+                        "model": model,
+                        "promptText": None,
+                        "inputTokens": inp,
+                        "outputTokens": out,
+                        "cacheReadTokens": cache_r,
+                        "cacheWriteTokens": cache_w,
+                        "requestId": rid,
+                        "sessionId": session_id,
+                        "timestamp": ts if isinstance(ts, str) else ms_to_iso(int(ts)),
+                    })
+                    count += 1
+            set_offset(str_path, fh.tell())
+        if count:
+            print(f"[scan:codex] {path.name}: +{count}", flush=True)
+    except (OSError, PermissionError) as exc:
+        print(f"[scan:codex] skipped {path}: {exc}", flush=True)
+    return count
+
+
+def scan_codex() -> int:
+    if "codex" not in SOURCES:
+        return 0
+    total = 0
+    for p in find_codex_logs():
+        total += scan_codex_file(p)
+    return total
+
+
+# ---------------------------------------------------------------------------
+# Antigravity IDE — brain overview.txt JSONL (estimated tokens)
+# ---------------------------------------------------------------------------
+
+def find_antigravity_overviews() -> list[Path]:
+    if not ANTIGRAVITY_BRAIN.exists():
+        return []
+    return list(ANTIGRAVITY_BRAIN.glob("*/.system_generated/logs/overview.txt"))
+
+
+def scan_antigravity_overview(path: Path) -> int:
+    str_path = str(path)
+    offset = get_offset(str_path)
+    count = 0
+    brain_id = path.parent.parent.parent.name  # .../brain/<id>/.system_generated/logs/overview.txt
+    try:
+        if path.stat().st_size <= offset:
+            return 0
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            fh.seek(offset)
+            for raw in fh:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    obj = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                step = obj.get("step_index")
+                typ = obj.get("type") or "step"
+                # Count meaningful agent/user turns
+                if typ not in (
+                    "USER_INPUT",
+                    "PLANNER_RESPONSE",
+                    "MODEL",
+                    "MODEL_RESPONSE",
+                    "AGENT_RESPONSE",
+                ) and not str(typ).endswith("RESPONSE"):
+                    continue
+                content = obj.get("content") or ""
+                if isinstance(content, dict):
+                    content = json.dumps(content)
+                content = str(content)
+                out_tokens = max(1, chars_to_tokens(len(content)))
+                in_tokens = max(out_tokens, 200) if typ == "USER_INPUT" else max(out_tokens * 3, 400)
+                if typ == "USER_INPUT":
+                    in_tokens, out_tokens = out_tokens, max(1, out_tokens // 10)
+                ts = obj.get("created_at") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                rid = f"antigravity:{brain_id}:{step}:{typ}"
+                enqueue({
+                    "source": "antigravity",
+                    "model": "gemini",
+                    "promptText": content[:400],
+                    "inputTokens": in_tokens,
+                    "outputTokens": out_tokens,
+                    "cacheReadTokens": 0,
+                    "cacheWriteTokens": 0,
+                    "requestId": rid,
+                    "sessionId": brain_id,
+                    "timestamp": ts,
+                })
+                count += 1
+            set_offset(str_path, fh.tell())
+        if count:
+            print(f"[scan:antigravity] {brain_id}: +{count}", flush=True)
+    except (OSError, PermissionError) as exc:
+        print(f"[scan:antigravity] skipped {path}: {exc}", flush=True)
+    return count
+
+
+def scan_antigravity() -> int:
+    if "antigravity" not in SOURCES:
+        return 0
+    total = 0
+    for p in find_antigravity_overviews():
+        total += scan_antigravity_overview(p)
+    return total
+
+
+# ---------------------------------------------------------------------------
+# Copilot IDE — session-store.db (VS Code / Antigravity)
+# ---------------------------------------------------------------------------
+
+def scan_copilot_ide_db(db_path: Path) -> int:
+    if not db_path.exists():
+        return 0
+    key = f"copilot_ide_turn:{db_path}"
+    last_id = int(kv_get(key, "0") or "0")
+    count = 0
+    max_id = last_id
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            """
+            SELECT t.id, t.session_id, t.turn_index, t.user_message, t.assistant_response,
+                   t.timestamp, s.agent_name, s.host_type
+            FROM turns t
+            LEFT JOIN sessions s ON s.id = t.session_id
+            WHERE t.id > ?
+            ORDER BY t.id ASC
+            """,
+            (last_id,),
+        ).fetchall()
+        for row in rows:
+            tid = int(row["id"])
+            max_id = max(max_id, tid)
+            user = row["user_message"] or ""
+            asst = row["assistant_response"] or ""
+            in_tok = max(1, chars_to_tokens(len(user)))
+            out_tok = max(1, chars_to_tokens(len(asst))) if asst else max(1, in_tok // 4)
+            agent = (row["agent_name"] or "copilot").replace(" ", "-").lower()
+            host = row["host_type"] or "vscode"
+            ts = row["timestamp"] or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            enqueue({
+                "source": "copilot_ide",
+                "model": f"copilot-{agent}",
+                "promptText": (user or "")[:400],
+                "inputTokens": in_tok,
+                "outputTokens": out_tok,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0,
+                "requestId": f"copilot_ide:{host}:{tid}",
+                "sessionId": row["session_id"],
+                "timestamp": ts,
+            })
+            count += 1
+        con.close()
+    except sqlite3.Error as exc:
+        print(f"[copilot_ide] {db_path}: {exc}", flush=True)
+        return 0
+    if max_id > last_id:
+        kv_set(key, str(max_id))
+    if count:
+        print(f"[scan:copilot_ide] {db_path.parent.name}: +{count}", flush=True)
+    return count
+
+
+def scan_copilot_ide() -> int:
+    if "copilot_ide" not in SOURCES:
+        return 0
+    total = 0
+    for db in _vscode_style_copilot_dbs():
+        total += scan_copilot_ide_db(db)
+    return total
+
+
+# ---------------------------------------------------------------------------
+# Copilot CLI — ~/.copilot/logs (estimate per process session)
+# ---------------------------------------------------------------------------
+
+def scan_copilot_cli() -> int:
+    if "copilot_cli" not in SOURCES:
+        return 0
+    if not COPILOT_LOGS.exists():
+        return 0
+    count = 0
+    for path in sorted(COPILOT_LOGS.glob("process-*.log")):
+        key = f"copilot_cli:{path.name}"
+        if kv_get(key):
+            # Re-scan if file grew a lot (new activity in same process)
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            prev = int(kv_get(f"{key}:size", "0") or "0")
+            if size <= prev + 2048:
+                continue
+            kv_set(f"{key}:size", str(size))
+            # Additional activity burst
+            rid = f"copilot_cli:{path.stem}:sz{size}"
+            enqueue({
+                "source": "copilot_cli",
+                "model": "copilot-cli",
+                "promptText": path.name,
+                "inputTokens": 800,
+                "outputTokens": 200,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0,
+                "requestId": rid,
+                "sessionId": path.stem,
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(path.stat().st_mtime)),
+            })
+            count += 1
+            continue
+
+        try:
+            size = path.stat().st_size
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        # First sighting of a process log ≈ one CLI session
+        est = max(500, chars_to_tokens(size))
+        enqueue({
+            "source": "copilot_cli",
+            "model": "copilot-cli",
+            "promptText": path.name,
+            "inputTokens": est,
+            "outputTokens": max(100, est // 5),
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": 0,
+            "requestId": f"copilot_cli:{path.stem}",
+            "sessionId": path.stem,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(mtime)),
+        })
+        kv_set(key, "1")
+        kv_set(f"{key}:size", str(size))
+        count += 1
+    if count:
+        print(f"[scan:copilot_cli] +{count}", flush=True)
+    return count
+
+
 def scan_all_sources(initial: bool = False) -> int:
     total = 0
     total += scan_claude(from_start=False)
     total += scan_puku(from_start=False)
     total += scan_cursor_ai_tracking()
     total += scan_cursor_transcripts()
+    total += scan_codex()
+    total += scan_antigravity()
+    total += scan_copilot_ide()
+    total += scan_copilot_cli()
     return total
 
 
@@ -614,6 +973,14 @@ def source_for_path(path: str) -> str | None:
         return "claude_code"
     if "/.cursor/" in norm:
         return "cursor"
+    if "/.codex/" in norm:
+        return "codex"
+    if "/.gemini/antigravity/" in norm:
+        return "antigravity"
+    if "/github.copilot-chat/" in norm:
+        return "copilot_ide"
+    if "/.copilot/" in norm:
+        return "copilot_cli"
     return None
 
 
@@ -628,13 +995,19 @@ def request_push():
 
 class LogHandler(FileSystemEventHandler):
     def _handle(self, path: str, created: bool = False):
-        if not path.endswith(".jsonl"):
-            return
         source = source_for_path(path)
         if not source or source not in SOURCES:
             return
         p = Path(path)
-        found = scan_jsonl_file(p, source, from_start=created or get_offset(str(p)) == 0)
+        found = 0
+        if source == "codex" and path.endswith(".jsonl"):
+            found = scan_codex_file(p)
+        elif source == "antigravity" and path.endswith("overview.txt"):
+            found = scan_antigravity_overview(p)
+        elif source in ("claude_code", "puku_cli", "cursor") and path.endswith(".jsonl"):
+            found = scan_jsonl_file(p, source, from_start=created or get_offset(str(p)) == 0)
+        elif source == "copilot_cli" and path.endswith(".log"):
+            found = scan_copilot_cli()
         if found:
             request_push()
 
@@ -653,6 +1026,23 @@ class CursorDbHandler(FileSystemEventHandler):
     def _maybe_trigger(self, path: str):
         name = Path(path).name.lower()
         if "ai-code-tracking" in name or name.endswith((".db", ".db-wal", ".db-shm")):
+            request_push()
+
+    def on_modified(self, event):
+        if not event.is_directory:
+            self._maybe_trigger(str(event.src_path))
+
+    def on_created(self, event):
+        if not event.is_directory:
+            self._maybe_trigger(str(event.src_path))
+
+
+class CopilotDbHandler(FileSystemEventHandler):
+    """Copilot Chat session-store.db (+ WAL) → scan + push."""
+
+    def _maybe_trigger(self, path: str):
+        name = Path(path).name.lower()
+        if "session-store" in name or name.endswith((".db", ".db-wal", ".db-shm")):
             request_push()
 
     def on_modified(self, event):
@@ -686,6 +1076,29 @@ def start_watchdogs():
     if CURSOR_AI_DIR.exists() and "cursor" in SOURCES:
         observer.schedule(CursorDbHandler(), str(CURSOR_AI_DIR), recursive=False)
         print(f"[watchdog] realtime: {CURSOR_AI_DIR}", flush=True)
+        watched += 1
+
+    if CODEX_SESSIONS.exists() and "codex" in SOURCES:
+        observer.schedule(LogHandler(), str(CODEX_SESSIONS), recursive=True)
+        print(f"[watchdog] realtime: {CODEX_SESSIONS}", flush=True)
+        watched += 1
+
+    if ANTIGRAVITY_BRAIN.exists() and "antigravity" in SOURCES:
+        observer.schedule(LogHandler(), str(ANTIGRAVITY_BRAIN), recursive=True)
+        print(f"[watchdog] realtime: {ANTIGRAVITY_BRAIN}", flush=True)
+        watched += 1
+
+    if "copilot_ide" in SOURCES:
+        for db in _vscode_style_copilot_dbs():
+            parent = db.parent
+            if parent.exists():
+                observer.schedule(CopilotDbHandler(), str(parent), recursive=False)
+                print(f"[watchdog] realtime: {parent}", flush=True)
+                watched += 1
+
+    if COPILOT_LOGS.exists() and "copilot_cli" in SOURCES:
+        observer.schedule(LogHandler(), str(COPILOT_LOGS), recursive=False)
+        print(f"[watchdog] realtime: {COPILOT_LOGS}", flush=True)
         watched += 1
 
     if watched:
@@ -815,37 +1228,37 @@ def push_loop():
             print("[realtime] change detected — scanning & pushing", flush=True)
 
         # On event OR periodic tick: collect then push immediately
-        scan_claude()
-        scan_puku()
-        scan_cursor_ai_tracking()
-        scan_cursor_transcripts()
+        scan_all_sources()
         flush_queue()
 
 
 def cursor_fast_poll_loop():
     """
-    Extra safety for Cursor SQLite: poll mtime every few seconds in case
+    Extra safety for SQLite sources: poll mtime every few seconds in case
     inotify misses WAL updates on some systems.
     """
-    if "cursor" not in SOURCES:
-        return
-    last_mtime = 0.0
+    last: dict[str, float] = {}
     while True:
         time.sleep(3)
-        try:
-            if not CURSOR_AI_DB.exists():
-                continue
-            mtime = CURSOR_AI_DB.stat().st_mtime
-            # Also check WAL sidecar
-            wal = Path(str(CURSOR_AI_DB) + "-wal")
-            if wal.exists():
-                mtime = max(mtime, wal.stat().st_mtime)
-            if mtime > last_mtime:
-                if last_mtime > 0:
-                    request_push()
-                last_mtime = mtime
-        except OSError:
-            pass
+        paths: list[Path] = []
+        if "cursor" in SOURCES and CURSOR_AI_DB.exists():
+            paths.append(CURSOR_AI_DB)
+        if "copilot_ide" in SOURCES:
+            paths.extend(_vscode_style_copilot_dbs())
+        for db in paths:
+            try:
+                mtime = db.stat().st_mtime
+                wal = Path(str(db) + "-wal")
+                if wal.exists():
+                    mtime = max(mtime, wal.stat().st_mtime)
+                key = str(db)
+                prev = last.get(key, 0.0)
+                if mtime > prev:
+                    if prev > 0:
+                        request_push()
+                    last[key] = mtime
+            except OSError:
+                pass
 
 
 def heartbeat_loop():
@@ -864,7 +1277,14 @@ def main():
     print(f"[agent] starting — device={DEVICE_ID} backend={BACKEND}", flush=True)
     print(f"[agent] data_dir={DATA_DIR} (encrypted config)", flush=True)
     print(f"[agent] sources={sorted(SOURCES)}", flush=True)
-    print(f"[agent] claude={CLAUDE_PROJECTS.exists()} puku={PUKU_PROJECTS.exists()} cursor_ai={CURSOR_AI_DB.exists()}", flush=True)
+    print(
+        f"[agent] claude={CLAUDE_PROJECTS.exists()} puku={PUKU_PROJECTS.exists()} "
+        f"cursor_ai={CURSOR_AI_DB.exists()} codex={CODEX_SESSIONS.exists()} "
+        f"antigravity={ANTIGRAVITY_BRAIN.exists()} "
+        f"copilot_ide={bool(_vscode_style_copilot_dbs())} "
+        f"copilot_cli={COPILOT_LOGS.exists()}",
+        flush=True,
+    )
     print("[agent] mode=realtime (watch → ingest → websocket dashboard)", flush=True)
 
     atexit.register(send_offline)
@@ -885,7 +1305,11 @@ def main():
     threading.Thread(target=cursor_fast_poll_loop, daemon=True).start()
 
     send_heartbeat()
-    print("[agent] running — live push on Claude / Puku CLI / Cursor writes. Ctrl-C to stop.", flush=True)
+    print(
+        "[agent] running — live push on Claude / Puku / Cursor / Codex / "
+        "Antigravity / Copilot writes. Ctrl-C to stop.",
+        flush=True,
+    )
     while True:
         time.sleep(60)
 

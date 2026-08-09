@@ -4,7 +4,7 @@
 [![Publish npm](https://github.com/mirzasaikatahmmed/token-monitor-package/actions/workflows/publish.yml/badge.svg)](https://github.com/mirzasaikatahmmed/token-monitor-package/actions/workflows/publish.yml)
 [![npm](https://img.shields.io/npm/v/@mirzasaikatahmmed/token-monitor.svg)](https://www.npmjs.com/package/@mirzasaikatahmmed/token-monitor)
 
-Professional global CLI for the **Token Monitor** agent. Collects Claude Code, Puku CLI, and Cursor usage on this machine and ships it to your dashboard.
+Professional global CLI for the **Token Monitor** agent. Collects Claude Code, Puku CLI, Cursor, Codex, Antigravity, and GitHub Copilot (IDE + CLI) usage on this machine and ships it to your dashboard.
 
 **Repository:** https://github.com/mirzasaikatahmmed/token-monitor-package
 

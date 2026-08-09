@@ -102,6 +102,10 @@ export async function cmdDoctor(): Promise<void> {
     ['Claude Code', join(home, '.claude', 'projects')],
     ['Puku CLI', join(home, '.puku-cli', 'projects')],
     ['Cursor AI DB', join(home, '.cursor', 'ai-tracking', 'ai-code-tracking.db')],
+    ['Codex CLI', join(home, '.codex', 'sessions')],
+    ['Antigravity', join(home, '.gemini', 'antigravity', 'brain')],
+    ['Copilot IDE', join(home, '.config', 'Code', 'User', 'globalStorage', 'github.copilot-chat', 'session-store.db')],
+    ['Copilot CLI', join(home, '.copilot', 'logs')],
   ] as const) {
     if (existsSync(path)) ok(`${label}: ${path}`);
     else warn(`${label}: not found (${path})`);

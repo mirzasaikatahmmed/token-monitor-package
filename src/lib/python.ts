@@ -86,7 +86,15 @@ export function writeEncryptedConfig(cfg: AgentConfig): void {
     deviceId: cfg.deviceId,
     hostname: cfg.hostname,
     pushIntervalSeconds: cfg.pushIntervalSeconds ?? 30,
-    sources: cfg.sources ?? ['claude_code', 'puku_cli', 'cursor'],
+    sources: cfg.sources ?? [
+      'claude_code',
+      'puku_cli',
+      'cursor',
+      'codex',
+      'antigravity',
+      'copilot_ide',
+      'copilot_cli',
+    ],
   });
   const r = runPython([vendorAgentPy(), '--write-config'], { input: payload });
   if (r.status !== 0) {
