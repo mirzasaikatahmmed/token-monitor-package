@@ -123,7 +123,7 @@ Workflows in [`.github/workflows/`](https://github.com/mirzasaikatahmmed/token-m
 | Workflow | Trigger | Action |
 |----------|---------|--------|
 | [`ci.yml`](https://github.com/mirzasaikatahmmed/token-monitor-package/blob/main/.github/workflows/ci.yml) | push / PR | typecheck + build |
-| [`publish.yml`](https://github.com/mirzasaikatahmmed/token-monitor-package/blob/main/.github/workflows/publish.yml) | push to `main`/`master` | build + `npm publish` |
+| [`publish.yml`](https://github.com/mirzasaikatahmmed/token-monitor-package/blob/main/.github/workflows/publish.yml) | push to `main`/`master` | **auto bump patch** → build → `npm publish` → commit + tag |
 
 ### Secrets
 
@@ -131,16 +131,18 @@ Workflows in [`.github/workflows/`](https://github.com/mirzasaikatahmmed/token-m
 2. Add GitHub Actions secret **`NPM_TOKEN`**:  
    https://github.com/mirzasaikatahmmed/token-monitor-package/settings/secrets/actions
 
-### Release
+### How versioning works
 
-Bump the version, then push (same version on npm is skipped):
+On every push to `main`/`master` (except release commits):
 
-```bash
-npm version patch
-git push && git push --tags
-```
+1. Bumps **`patch`** (`1.0.0` → `1.0.1`)
+2. Publishes `@mirzasaikatahmmed/token-monitor` to npm
+3. Commits `chore: release vX.Y.Z [skip ci]` and pushes tag `vX.Y.Z`
 
-Manual publish: [Actions → Publish npm → Run workflow](https://github.com/mirzasaikatahmmed/token-monitor-package/actions/workflows/publish.yml)
+Manual run (choose patch / minor / major):  
+[Actions → Publish npm → Run workflow](https://github.com/mirzasaikatahmmed/token-monitor-package/actions/workflows/publish.yml)
+
+You do **not** need to bump the version yourself before pushing.
 
 ## Links
 

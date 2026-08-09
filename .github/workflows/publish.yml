@@ -4,20 +4,39 @@ on:
   push:
     branches: [main, master]
   workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 concurrency:
   group: publish-npm-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   publish:
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') &&
+        !contains(github.event.head_commit.message, '[skip ci]') &&
+        !contains(github.event.head_commit.message, 'chore: release')
+      )
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -32,24 +51,39 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
 
-      - name: Publish (skip if version already exists)
+      - name: Bump version, publish, and push tag
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          BUMP: ${{ github.event.inputs.bump || 'patch' }}
         run: |
           set -euo pipefail
-          NAME="$(node -p "require('./package.json').name")"
-          VERSION="$(node -p "require('./package.json').version")"
-          echo "Package: ${NAME}@${VERSION}"
-
-          if npm view "${NAME}@${VERSION}" version >/dev/null 2>&1; then
-            echo "Version ${VERSION} already on npm — skipping publish."
-            exit 0
-          fi
 
           if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
             echo "::error::Missing GitHub secret NPM_TOKEN"
             exit 1
           fi
 
+          NAME="$(node -p "require('./package.json').name")"
+          OLD_VERSION="$(node -p "require('./package.json').version")"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Bump package.json (+ package-lock) without creating a local git tag yet
+          npm version "$BUMP" --no-git-tag-version
+          NEW_VERSION="$(node -p "require('./package.json').version")"
+          echo "Version: ${OLD_VERSION} → ${NEW_VERSION} (${BUMP})"
+
+          if npm view "${NAME}@${NEW_VERSION}" version >/dev/null 2>&1; then
+            echo "::error::${NAME}@${NEW_VERSION} already exists on npm"
+            exit 1
+          fi
+
           npm publish --access public
-          echo "Published ${NAME}@${VERSION}"
+          echo "Published ${NAME}@${NEW_VERSION}"
+
+          git add package.json package-lock.json
+          git commit -m "chore: release v${NEW_VERSION} [skip ci]"
+          git tag "v${NEW_VERSION}"
+          git push origin HEAD
+          git push origin "v${NEW_VERSION}"
