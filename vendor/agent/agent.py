@@ -5,6 +5,7 @@ Token Monitor Agent — collects AI usage from this device and ships it to the b
 Sources (auto-discovered on this machine):
   • Claude Code     — ~/.claude/projects/**/*.jsonl
   • Puku CLI        — ~/.puku-cli/projects/**/*.jsonl
+  • Command Code   — ~/.commandcode/projects/**/*.jsonl
   • Cursor          — ~/.cursor/ai-tracking/ai-code-tracking.db (+ transcripts)
   • Codex CLI       — ~/.codex/sessions/**/*.jsonl  (real token_count events)
   • Antigravity     — ~/.gemini/antigravity/brain/**/overview.txt (estimated)
@@ -77,6 +78,7 @@ LOG_FILE     = DATA_DIR / "agent.log"
 HOME = Path.home()
 CLAUDE_PROJECTS = HOME / ".claude" / "projects"
 PUKU_PROJECTS   = HOME / ".puku-cli" / "projects"
+COMMANDCODE_PROJECTS = HOME / ".commandcode" / "projects"
 CURSOR_AI_DIR   = HOME / ".cursor" / "ai-tracking"
 CURSOR_AI_DB    = CURSOR_AI_DIR / "ai-code-tracking.db"
 CURSOR_PROJECTS = HOME / ".cursor" / "projects"
@@ -88,6 +90,7 @@ COPILOT_LOGS    = COPILOT_DIR / "logs"
 DEFAULT_SOURCES = [
     "claude_code",
     "puku_cli",
+    "command_code",
     "cursor",
     "codex",
     "antigravity",
@@ -503,6 +506,15 @@ def find_puku_logs() -> list[Path]:
     return list(PUKU_PROJECTS.rglob("*.jsonl"))
 
 
+def find_commandcode_logs() -> list[Path]:
+    if not COMMANDCODE_PROJECTS.exists():
+        return []
+    return [
+        p for p in COMMANDCODE_PROJECTS.rglob("*.jsonl")
+        if not p.name.endswith(".checkpoints.jsonl")
+    ]
+
+
 def scan_jsonl_file(path: Path, source: str, from_start: bool = False) -> int:
     str_path = str(path)
     offset = 0 if from_start else get_offset(str_path)
@@ -543,6 +555,16 @@ def scan_puku(from_start: bool = False) -> int:
     for p in find_puku_logs():
         first = get_offset(str(p)) == 0
         total += scan_jsonl_file(p, "puku_cli", from_start=from_start or first)
+    return total
+
+
+def scan_commandcode(from_start: bool = False) -> int:
+    if "command_code" not in SOURCES:
+        return 0
+    total = 0
+    for p in find_commandcode_logs():
+        first = get_offset(str(p)) == 0
+        total += scan_jsonl_file(p, "command_code", from_start=from_start or first)
     return total
 
 
@@ -967,6 +989,7 @@ def scan_all_sources(initial: bool = False) -> int:
     total = 0
     total += scan_claude(from_start=False)
     total += scan_puku(from_start=False)
+    total += scan_commandcode(from_start=False)
     total += scan_cursor_ai_tracking()
     total += scan_cursor_transcripts()
     total += scan_codex()
@@ -981,6 +1004,8 @@ def source_for_path(path: str) -> str | None:
     norm = path.replace("\\", "/")
     if "/.puku-cli/" in norm:
         return "puku_cli"
+    if "/.commandcode/" in norm:
+        return "command_code"
     if "/.claude/" in norm:
         return "claude_code"
     if "/.cursor/" in norm:
@@ -1016,7 +1041,9 @@ class LogHandler(FileSystemEventHandler):
             found = scan_codex_file(p)
         elif source == "antigravity" and path.endswith("overview.txt"):
             found = scan_antigravity_overview(p)
-        elif source in ("claude_code", "puku_cli", "cursor") and path.endswith(".jsonl"):
+        elif source in ("claude_code", "puku_cli", "command_code", "cursor") and path.endswith(".jsonl"):
+            if path.endswith(".checkpoints.jsonl"):
+                return
             found = scan_jsonl_file(p, source, from_start=created or get_offset(str(p)) == 0)
         elif source == "copilot_cli" and path.endswith(".log"):
             found = scan_copilot_cli()
@@ -1075,6 +1102,9 @@ def start_watchdogs():
         print(f"[watchdog] realtime: {CLAUDE_PROJECTS}", flush=True)
         watched += 1
 
+    if COMMANDCODE_PROJECTS.exists() and "command_code" in SOURCES:
+        observer.schedule(LogHandler(), str(COMMANDCODE_PROJECTS), recursive=True)
+        print(f"[watchdog] realtime: {COMMANDCODE_PROJECTS}", flush=True)
     if PUKU_PROJECTS.exists() and "puku_cli" in SOURCES:
         observer.schedule(LogHandler(), str(PUKU_PROJECTS), recursive=True)
         print(f"[watchdog] realtime: {PUKU_PROJECTS}", flush=True)
@@ -1291,6 +1321,7 @@ def main():
     print(f"[agent] sources={sorted(SOURCES)}", flush=True)
     print(
         f"[agent] claude={CLAUDE_PROJECTS.exists()} puku={PUKU_PROJECTS.exists()} "
+        f"command_code={COMMANDCODE_PROJECTS.exists()} "
         f"cursor_ai={CURSOR_AI_DB.exists()} codex={CODEX_SESSIONS.exists()} "
         f"antigravity={ANTIGRAVITY_BRAIN.exists()} "
         f"copilot_ide={bool(_vscode_style_copilot_dbs())} "
@@ -1318,7 +1349,7 @@ def main():
 
     send_heartbeat()
     print(
-        "[agent] running - live push on Claude / Puku / Cursor / Codex / "
+        "[agent] running - live push on Claude / Puku / Command Code / Cursor / Codex / "
         "Antigravity / Copilot writes. Ctrl-C to stop.",
         flush=True,
     )

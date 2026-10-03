@@ -50,6 +50,7 @@ export async function cmdStatus(): Promise<void> {
   const sources = [
     ['claude', join(home, '.claude', 'projects')],
     ['puku', join(home, '.puku-cli', 'projects')],
+    ['command_code', join(home, '.commandcode', 'projects')],
     ['cursor', join(home, '.cursor', 'ai-tracking', 'ai-code-tracking.db')],
     ['codex', join(home, '.codex', 'sessions')],
     ['antigravity', join(home, '.gemini', 'antigravity', 'brain')],

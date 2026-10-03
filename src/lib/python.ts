@@ -103,6 +103,7 @@ export function writeEncryptedConfig(cfg: AgentConfig): void {
     sources: cfg.sources ?? [
       'claude_code',
       'puku_cli',
+      'command_code',
       'cursor',
       'codex',
       'antigravity',

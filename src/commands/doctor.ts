@@ -101,6 +101,7 @@ export async function cmdDoctor(): Promise<void> {
   for (const [label, path] of [
     ['Claude Code', join(home, '.claude', 'projects')],
     ['Puku CLI', join(home, '.puku-cli', 'projects')],
+    ['Command Code', join(home, '.commandcode', 'projects')],
     ['Cursor AI DB', join(home, '.cursor', 'ai-tracking', 'ai-code-tracking.db')],
     ['Codex CLI', join(home, '.codex', 'sessions')],
     ['Antigravity', join(home, '.gemini', 'antigravity', 'brain')],
